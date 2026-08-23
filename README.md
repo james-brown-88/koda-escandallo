@@ -50,6 +50,12 @@ npm run preview
 - Histórico Mercasa: 12 meses simulados de 5 ingredientes
 - Histórico chef: 6 escandallos anteriores
 
+## Documentación técnica
+
+- [`docs/airtable-schema.md`](./docs/airtable-schema.md) — esquema Airtable para la base `KODA_Mercado` (mercados, familias, ingredientes, precios)
+- [`docs/n8n-scraper-workflow.md`](./docs/n8n-scraper-workflow.md) — arquitectura del scraper diario que alimenta Airtable
+- [`docs/n8n-scraper-workflow.json`](./docs/n8n-scraper-workflow.json) — workflow n8n listo para importar
+
 ## Puntos de integración (comentados en código)
 
 - `TODO(meg-integration)` → fetch del menú desde el MEG

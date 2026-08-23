@@ -26,7 +26,7 @@ import {
 import {
   Camera, Sparkles, TrendingUp, TrendingDown, AlertTriangle,
   ChefHat, Receipt, ArrowRight, RefreshCw, Info, Circle,
-  Star, Search, X, Plus
+  Star, Search, X, Plus, Trash2, Zap
 } from 'lucide-react'
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -325,7 +325,8 @@ export default function Escandallo() {
           paseIdx: pIdx,
           ingIdx: iIdx,
           ing,
-          merma: MERMA_PRESETS[ing.familia] || 0.05,
+          // merma_custom (%) tiene prioridad sobre el preset por familia
+          merma: ing.merma_custom != null ? ing.merma_custom / 100 : (MERMA_PRESETS[ing.familia] || 0.05),
           coste_linea_pax: cLinea,
           delta: deltaPct(ing)
         })
@@ -367,7 +368,7 @@ export default function Escandallo() {
     }
   }, [menu, pctCostesComp, tarifa])
 
-  /* ── Handler edición inline de precio_chef ──────────────────────────── */
+  /* ── Handlers edición inline de precios ────────────────────────────── */
   function updatePrecioChef(paseIdx, ingIdx, nuevoPrecio) {
     setMenu(prev => {
       const next = structuredClone(prev)
@@ -379,6 +380,71 @@ export default function Escandallo() {
     setMenu(prev => ({ ...prev, precio_venta_chef: Math.max(0, parseFloat(nuevo) || 0) }))
   }
 
+  /* ── Handlers edición de ingredientes ──────────────────────────────── */
+  function updateIngrediente(paseIdx, ingIdx, field, value) {
+    setMenu(prev => {
+      const next = structuredClone(prev)
+      const num = ['cantidad', 'precio_chef', 'precio_mercasa', 'merma_custom'].includes(field)
+      next.pases[paseIdx].ingredientes[ingIdx][field] = num ? Math.max(0, parseFloat(value) || 0) : value
+      return next
+    })
+  }
+  function addIngrediente(paseIdx) {
+    setMenu(prev => {
+      const next = structuredClone(prev)
+      next.pases[paseIdx].ingredientes.push({
+        nombre: 'Nuevo ingrediente',
+        cantidad: 100,
+        unidad: 'g',
+        familia: 'verdura',
+        precio_chef: 5,
+        precio_mercasa: 4.5
+      })
+      return next
+    })
+  }
+  function deleteIngrediente(paseIdx, ingIdx) {
+    setMenu(prev => {
+      const next = structuredClone(prev)
+      next.pases[paseIdx].ingredientes.splice(ingIdx, 1)
+      return next
+    })
+  }
+
+  /* ── Handlers edición de pases ─────────────────────────────────────── */
+  function updatePase(paseIdx, field, value) {
+    setMenu(prev => {
+      const next = structuredClone(prev)
+      next.pases[paseIdx][field] = value
+      return next
+    })
+  }
+  function addPase() {
+    setMenu(prev => {
+      const next = structuredClone(prev)
+      next.pases.push({
+        nombre: 'Nuevo pase',
+        tipo: 'entrante',
+        copy: '',
+        ingredientes: []
+      })
+      return next
+    })
+  }
+  function deletePase(paseIdx) {
+    if (!confirm('¿Eliminar este pase y todos sus ingredientes?')) return
+    setMenu(prev => {
+      const next = structuredClone(prev)
+      next.pases.splice(paseIdx, 1)
+      return next
+    })
+  }
+
+  /* ── Aplicar precio sugerido (recalcula precio venta para mantener margen 35%) */
+  function aplicarPrecioSugerido() {
+    updatePrecioVenta(Math.ceil(calc.precioSugerido))
+  }
+
   /* ─────────────────────────────────────────────────────────────────── */
   return (
     <div className="min-h-screen">
@@ -386,7 +452,7 @@ export default function Escandallo() {
       <BreadcrumbTabs view={view} setView={setView} menu={menu} />
       <main className="px-4 sm:px-6 lg:px-8 pb-24 pt-4 sm:pt-6 max-w-[1400px] mx-auto">
         {view === 'dashboard'  && <ViewDashboard calc={calc} menu={menu} setMenu={setMenu} updatePrecioVenta={updatePrecioVenta} setView={setView} tarifa={tarifa} setTarifa={setTarifa} />}
-        {view === 'desglose'   && <ViewDesglose  calc={calc} menu={menu} updatePrecioChef={updatePrecioChef} pctCostesComp={pctCostesComp} setPctCostesComp={setPctCostesComp} tarifa={tarifa} setTarifa={setTarifa} />}
+        {view === 'desglose'   && <ViewDesglose  calc={calc} menu={menu} updateIngrediente={updateIngrediente} addIngrediente={addIngrediente} deleteIngrediente={deleteIngrediente} updatePase={updatePase} addPase={addPase} deletePase={deletePase} pctCostesComp={pctCostesComp} setPctCostesComp={setPctCostesComp} tarifa={tarifa} setTarifa={setTarifa} updatePrecioVenta={updatePrecioVenta} aplicarPrecioSugerido={aplicarPrecioSugerido} />}
         {view === 'estacional' && <ViewEstacional menu={menu} />}
         {view === 'historico'  && <ViewHistorico calc={calc} />}
         {view === 'propuesta'  && <ViewPropuesta calc={calc} menu={menu} setMenu={setMenu} updatePrecioVenta={updatePrecioVenta} />}
@@ -725,10 +791,52 @@ function AlertsPanel({ calc }) {
 /* ═════════════════════════════════════════════════════════════════════════
  *  VISTA 2 · DESGLOSE POR INGREDIENTE (tabla editable)
  * ═════════════════════════════════════════════════════════════════════════ */
-function ViewDesglose({ calc, menu, updatePrecioChef, pctCostesComp, setPctCostesComp, tarifa, setTarifa }) {
+function ViewDesglose({ calc, menu, updateIngrediente, addIngrediente, deleteIngrediente, updatePase, addPase, deletePase, pctCostesComp, setPctCostesComp, tarifa, setTarifa, updatePrecioVenta, aplicarPrecioSugerido }) {
+  const UNIDADES = ['g', 'ml', 'ud', 'kg', 'L']
+  const FAMILIAS = Object.keys(MERMA_PRESETS)
+  const TIPOS_PASE = ['snack', 'entrante frío', 'entrante caliente', 'pescado', 'carne', 'guarnición', 'postre', 'petit four']
+
   return (
     <div className="flex flex-col gap-5">
-      {/* Config barra · complementarios + mano de obra */}
+      {/* ═════ Live summary bar (sticky) — se actualiza en tiempo real ═════ */}
+      <section className="bg-bg-surface border border-bg-line rounded-2xl p-4 sm:p-5 sticky top-[92px] z-30 backdrop-blur">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 items-center">
+          <div>
+            <div className="font-mono text-[9.5px] uppercase text-ink-60 tracking-widest mb-0.5">Coste /pax</div>
+            <div className="font-display text-lg sm:text-xl text-ember">{fmtEuro(calc.costeTotalPax)}</div>
+          </div>
+          <div>
+            <div className="font-mono text-[9.5px] uppercase text-ink-60 tracking-widest mb-0.5">Margen /pax</div>
+            <div className={`font-display text-lg sm:text-xl ${margenColor(calc.margenPct)}`}>
+              {fmtEuro(calc.margenAbs)} <span className="text-[11px] text-ink-60">({fmtPct(calc.margenPct)})</span>
+            </div>
+          </div>
+          <div>
+            <div className="font-mono text-[9.5px] uppercase text-ink-60 tracking-widest mb-0.5">Precio venta actual</div>
+            <div className="flex items-baseline gap-1">
+              <input
+                type="number" min="0" step="1"
+                value={menu.precio_venta_chef}
+                onChange={(e) => updatePrecioVenta(e.target.value)}
+                className="w-20 bg-bg-elevated border border-bg-line rounded px-2 py-0.5 font-display text-lg text-ink-100 focus:border-accent"
+              />
+              <span className="text-[11px] text-ink-60">€/pax</span>
+            </div>
+          </div>
+          <div>
+            <div className="font-mono text-[9.5px] uppercase text-ink-60 tracking-widest mb-0.5">Precio sugerido</div>
+            <div className="font-display text-lg text-accent-hi">{fmtEuro(calc.precioSugerido)} <span className="text-[10px] text-ink-60">para 35%</span></div>
+          </div>
+          <button
+            onClick={aplicarPrecioSugerido}
+            className="flex items-center justify-center gap-1.5 px-3 py-2 bg-accent text-bg-deep rounded-md font-mono text-[10.5px] tracking-widest uppercase font-semibold hover:bg-accent-hi transition-colors"
+          >
+            <Zap className="w-3 h-3" /> Aplicar
+          </button>
+        </div>
+      </section>
+
+      {/* Config: complementarios + mano de obra */}
       <section className="bg-bg-surface border border-bg-line rounded-2xl p-5 sm:p-6 grid md:grid-cols-2 gap-6">
         <div>
           <div className="font-mono text-[10px] tracking-[0.18em] uppercase text-ink-60 mb-2">Costes complementarios</div>
@@ -758,61 +866,148 @@ function ViewDesglose({ calc, menu, updatePrecioChef, pctCostesComp, setPctCoste
         const subtotal = lineasPase.reduce((s, l) => s + l.coste_linea_pax, 0)
         return (
           <section key={pIdx} className="bg-bg-surface border border-bg-line rounded-2xl overflow-hidden">
-            <div className="px-5 sm:px-6 py-4 border-b border-bg-line flex justify-between items-center">
-              <div>
-                <div className="font-mono text-[10px] tracking-[0.14em] uppercase text-ink-60 mb-1">Pase {pIdx + 1} · {pase.tipo}</div>
-                <h3 className="font-display text-lg tracking-tight leading-tight">{pase.nombre}</h3>
+            {/* Cabecera del pase — editable */}
+            <div className="px-5 sm:px-6 py-4 border-b border-bg-line flex justify-between items-center gap-3 flex-wrap">
+              <div className="flex-1 min-w-[180px]">
+                <div className="font-mono text-[10px] tracking-[0.14em] uppercase text-ink-60 mb-1 flex items-center gap-2">
+                  <span>Pase {pIdx + 1} ·</span>
+                  <select
+                    value={pase.tipo}
+                    onChange={(e) => updatePase(pIdx, 'tipo', e.target.value)}
+                    className="bg-transparent text-ink-60 hover:text-ink-100 cursor-pointer focus:outline-none focus:text-accent"
+                  >
+                    {TIPOS_PASE.map(t => <option key={t} value={t} className="bg-bg-elevated">{t}</option>)}
+                  </select>
+                </div>
+                <input
+                  type="text"
+                  value={pase.nombre}
+                  onChange={(e) => updatePase(pIdx, 'nombre', e.target.value)}
+                  className="w-full font-display text-lg tracking-tight leading-tight bg-transparent focus:bg-bg-elevated rounded px-1 -mx-1 focus:outline-none"
+                />
               </div>
-              <div className="text-right">
-                <div className="font-mono text-[10px] uppercase text-ink-60 tracking-widest">Subtotal /pax</div>
-                <div className="font-display text-xl text-accent-hi">{fmtEuro(subtotal)}</div>
+              <div className="flex items-center gap-3">
+                <div className="text-right">
+                  <div className="font-mono text-[10px] uppercase text-ink-60 tracking-widest">Subtotal /pax</div>
+                  <div className="font-display text-xl text-accent-hi">{fmtEuro(subtotal)}</div>
+                </div>
+                <button
+                  onClick={() => deletePase(pIdx)}
+                  title="Eliminar pase"
+                  className="text-ink-40 hover:text-ember transition-colors p-2 rounded hover:bg-ember/10"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>
             </div>
 
+            {/* Tabla editable de ingredientes */}
             <div className="overflow-x-auto">
-              <table className="w-full text-[13px] min-w-[720px]">
+              <table className="w-full text-[13px] min-w-[900px]">
                 <thead>
-                  <tr className="font-mono text-[10px] tracking-[0.12em] uppercase text-ink-60 text-left">
+                  <tr className="font-mono text-[10px] tracking-[0.12em] uppercase text-ink-60 text-left border-b border-bg-line/50">
                     <th className="px-4 py-3 font-normal">Ingrediente</th>
-                    <th className="px-2 py-3 font-normal">Cant. bruta</th>
+                    <th className="px-2 py-3 font-normal">Cantidad</th>
+                    <th className="px-2 py-3 font-normal">Ud.</th>
                     <th className="px-2 py-3 font-normal">Merma</th>
-                    <th className="px-2 py-3 font-normal">Cant. neta</th>
+                    <th className="px-2 py-3 font-normal">Neta</th>
                     <th className="px-2 py-3 font-normal text-right">€ chef</th>
                     <th className="px-2 py-3 font-normal text-right">€ Mercasa</th>
                     <th className="px-2 py-3 font-normal text-right">Δ</th>
                     <th className="px-2 py-3 font-normal text-right">Coste /pax</th>
                     <th className="px-2 py-3 font-normal">Fuente</th>
-                    <th className="px-4 py-3 font-normal text-right"></th>
+                    <th className="px-4 py-3 font-normal text-right w-16"></th>
                   </tr>
                 </thead>
                 <tbody className="text-ink-80">
+                  {lineasPase.length === 0 && (
+                    <tr>
+                      <td colSpan="11" className="px-4 py-8 text-center text-[12px] text-ink-60">
+                        Este pase no tiene ingredientes. Añade el primero abajo.
+                      </td>
+                    </tr>
+                  )}
                   {lineasPase.map((l, i) => {
                     const cantNeta = l.ing.cantidad * (1 - l.merma)
-                    const unidadPrecio = l.ing.unidad === 'ud' ? '/ud' : (l.ing.unidad === 'ml' ? '/L' : '/kg')
+                    const unidadPrecio = l.ing.unidad === 'ud' ? '/ud' : (l.ing.unidad === 'ml' || l.ing.unidad === 'L' ? '/L' : '/kg')
+                    const mermaPct = l.merma * 100
                     return (
                       <tr key={i} className="border-t border-bg-line hover:bg-bg-elevated/40 transition-colors">
-                        <td className="px-4 py-3">
-                          <div className="text-ink-100">{l.ing.nombre}</div>
-                          <div className="text-[10.5px] text-ink-60">{l.ing.familia}</div>
+                        {/* Nombre + familia */}
+                        <td className="px-4 py-2.5">
+                          <input
+                            type="text"
+                            value={l.ing.nombre}
+                            onChange={(e) => updateIngrediente(l.paseIdx, l.ingIdx, 'nombre', e.target.value)}
+                            className="w-full bg-transparent text-ink-100 focus:bg-bg-elevated rounded px-1 -mx-1 focus:outline-none focus:ring-1 focus:ring-accent-lo"
+                          />
+                          <select
+                            value={l.ing.familia}
+                            onChange={(e) => updateIngrediente(l.paseIdx, l.ingIdx, 'familia', e.target.value)}
+                            className="text-[10.5px] text-ink-60 bg-transparent focus:bg-bg-elevated rounded px-1 -mx-1 mt-0.5 focus:outline-none cursor-pointer hover:text-ink-80"
+                          >
+                            {FAMILIAS.map(f => <option key={f} value={f} className="bg-bg-elevated">{f}</option>)}
+                          </select>
                         </td>
-                        <td className="px-2 py-3 font-mono text-ink-80">{l.ing.cantidad} {l.ing.unidad}</td>
-                        <td className="px-2 py-3 font-mono text-ink-60">{(l.merma * 100).toFixed(0)}%</td>
-                        <td className="px-2 py-3 font-mono text-ink-80">{cantNeta.toFixed(0)} {l.ing.unidad}</td>
-                        <td className="px-2 py-3 text-right">
+                        {/* Cantidad */}
+                        <td className="px-2 py-2.5">
+                          <input
+                            type="number" min="0" step="1"
+                            value={l.ing.cantidad}
+                            onChange={(e) => updateIngrediente(l.paseIdx, l.ingIdx, 'cantidad', e.target.value)}
+                            className="w-16 bg-bg-elevated border border-bg-line rounded px-2 py-1 font-mono text-ink-100 focus:border-accent transition-colors"
+                          />
+                        </td>
+                        {/* Unidad */}
+                        <td className="px-2 py-2.5">
+                          <select
+                            value={l.ing.unidad}
+                            onChange={(e) => updateIngrediente(l.paseIdx, l.ingIdx, 'unidad', e.target.value)}
+                            className="bg-bg-elevated border border-bg-line rounded px-2 py-1 font-mono text-ink-100 focus:border-accent cursor-pointer"
+                          >
+                            {UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}
+                          </select>
+                        </td>
+                        {/* Merma (editable, override) */}
+                        <td className="px-2 py-2.5">
+                          <div className="flex items-center gap-0.5">
+                            <input
+                              type="number" min="0" max="100" step="1"
+                              value={mermaPct.toFixed(0)}
+                              onChange={(e) => updateIngrediente(l.paseIdx, l.ingIdx, 'merma_custom', e.target.value)}
+                              title={l.ing.merma_custom != null ? 'Merma personalizada' : `Preset ${l.ing.familia}`}
+                              className={`w-12 bg-bg-elevated border rounded px-1.5 py-1 font-mono text-right focus:border-accent transition-colors ${
+                                l.ing.merma_custom != null ? 'border-accent-lo/60 text-accent' : 'border-bg-line text-ink-60'
+                              }`}
+                            />
+                            <span className="text-[10px] text-ink-60">%</span>
+                          </div>
+                        </td>
+                        {/* Cant. neta (readonly) */}
+                        <td className="px-2 py-2.5 font-mono text-[11.5px] text-ink-60">{cantNeta.toFixed(0)} {l.ing.unidad}</td>
+                        {/* Precio chef */}
+                        <td className="px-2 py-2.5 text-right">
                           <div className="flex items-center justify-end gap-1">
                             <input
                               type="number" step="0.1" min="0"
                               value={l.ing.precio_chef}
-                              onChange={(e) => updatePrecioChef(l.paseIdx, l.ingIdx, e.target.value)}
+                              onChange={(e) => updateIngrediente(l.paseIdx, l.ingIdx, 'precio_chef', e.target.value)}
                               className="w-16 bg-bg-elevated border border-bg-line rounded px-2 py-1 text-right font-mono text-ink-100 focus:border-accent transition-colors"
                             />
                             <span className="text-[10px] text-ink-60">{unidadPrecio}</span>
                           </div>
                         </td>
-                        <td className="px-2 py-3 text-right font-mono text-ink-60">
-                          {l.ing.precio_mercasa ? fmtEuro(l.ing.precio_mercasa) : '—'}
+                        {/* Precio mercasa */}
+                        <td className="px-2 py-2.5 text-right">
+                          <input
+                            type="number" step="0.1" min="0"
+                            value={l.ing.precio_mercasa || 0}
+                            onChange={(e) => updateIngrediente(l.paseIdx, l.ingIdx, 'precio_mercasa', e.target.value)}
+                            className="w-16 bg-transparent border border-transparent hover:border-bg-line focus:border-accent focus:bg-bg-elevated rounded px-2 py-1 text-right font-mono text-ink-60 transition-colors"
+                          />
                         </td>
-                        <td className="px-2 py-3 text-right">
+                        {/* Delta */}
+                        <td className="px-2 py-2.5 text-right">
                           {l.delta === null
                             ? <span className="text-ink-40 font-mono">—</span>
                             : (
@@ -825,18 +1020,28 @@ function ViewDesglose({ calc, menu, updatePrecioChef, pctCostesComp, setPctCoste
                             )
                           }
                         </td>
-                        <td className="px-2 py-3 text-right font-mono text-ink-100">{fmtEuro(l.coste_linea_pax)}</td>
-                        <td className="px-2 py-3">
+                        {/* Coste línea (readonly) */}
+                        <td className="px-2 py-2.5 text-right font-mono text-ink-100 font-semibold">{fmtEuro(l.coste_linea_pax)}</td>
+                        <td className="px-2 py-2.5">
                           <SourceBadge fuente="manual" />
                         </td>
-                        <td className="px-4 py-3 text-right">
-                          <button
-                            title="Subir foto de albarán (visión + LLM)"
-                            onClick={() => alert('TODO(albaran-vision): abrir cámara para OCR del albarán y actualizar precio_chef')}
-                            className="text-ink-60 hover:text-accent transition-colors"
-                          >
-                            <Camera className="w-4 h-4 inline" />
-                          </button>
+                        <td className="px-4 py-2.5 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              title="Subir foto de albarán (visión + LLM)"
+                              onClick={() => alert('TODO(albaran-vision): abrir cámara para OCR del albarán y actualizar precio_chef')}
+                              className="text-ink-40 hover:text-accent transition-colors p-1"
+                            >
+                              <Camera className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              title="Eliminar ingrediente"
+                              onClick={() => deleteIngrediente(l.paseIdx, l.ingIdx)}
+                              className="text-ink-40 hover:text-ember transition-colors p-1"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     )
@@ -844,9 +1049,29 @@ function ViewDesglose({ calc, menu, updatePrecioChef, pctCostesComp, setPctCoste
                 </tbody>
               </table>
             </div>
+
+            {/* Botón añadir ingrediente */}
+            <div className="p-3 border-t border-bg-line">
+              <button
+                onClick={() => addIngrediente(pIdx)}
+                className="w-full py-2.5 border border-dashed border-bg-line rounded-md text-ink-60 hover:text-accent hover:border-accent-lo hover:bg-accent-lo/5 transition-colors text-[11px] font-mono tracking-[0.14em] uppercase flex items-center justify-center gap-2"
+              >
+                <Plus className="w-3.5 h-3.5" /> Añadir ingrediente
+              </button>
+            </div>
           </section>
         )
       })}
+
+      {/* Añadir nuevo pase */}
+      <section>
+        <button
+          onClick={addPase}
+          className="w-full py-4 border-2 border-dashed border-bg-line rounded-2xl text-ink-60 hover:text-accent hover:border-accent-lo hover:bg-accent-lo/5 transition-colors text-[11px] font-mono tracking-[0.14em] uppercase flex items-center justify-center gap-2"
+        >
+          <Plus className="w-4 h-4" /> Añadir pase al menú
+        </button>
+      </section>
 
       {/* Totales */}
       <section className="bg-bg-elevated border border-accent-lo/40 rounded-2xl p-5 sm:p-6 grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -1283,10 +1508,12 @@ function ViewEstacional({ menu }) {
           </section>
         )}
 
-        {/* Nota de contexto */}
-        <div className="text-[11px] font-mono text-ink-60 flex items-center gap-2 pt-2 border-t border-bg-line">
-          <Info className="w-3.5 h-3.5" />
-          Datos simulados de Mercabarna · <span className="text-ink-40">TODO(scraper): reemplazar por fetch real /api/mercasa/precios</span>
+        {/* Aviso orientativo */}
+        <div className="flex items-start gap-2.5 pt-3 border-t border-bg-line">
+          <AlertTriangle className="w-4 h-4 text-gold flex-shrink-0 mt-0.5" />
+          <div className="text-[11.5px] text-ink-60 leading-relaxed">
+            <b className="text-ink-80">Precios orientativos.</b> Los datos mostrados son estimaciones basadas en el mercado mayorista de referencia y pueden variar según el proveedor, la temporada, la calidad y la disponibilidad del producto. Consulta siempre el precio final con tu distribuidor antes de cerrar el escandallo.
+          </div>
         </div>
       </div>
     </div>

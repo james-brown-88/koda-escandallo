@@ -1,0 +1,323 @@
+{
+  "name": "KODA · Scraper Mercasa → Airtable",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron-daily",
+      "name": "Cron · 06:00 diario",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "={{ $env.AIRTABLE_BASE_ID }}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "mercados",
+          "mode": "name"
+        },
+        "filterByFormula": "={activo} = TRUE()",
+        "options": {}
+      },
+      "id": "get-mercados",
+      "name": "Airtable · Get mercados activos",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [460, 300],
+      "credentials": {
+        "airtableTokenApi": {
+          "name": "KODA Airtable PAT"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "split-batches",
+      "name": "Split · un mercado a la vez",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url_scraping }}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxRetries": 3,
+            "waitBetweenRetries": 30000
+          }
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "KODA-Scraper/1.0 (jaime@koda.chef)"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml"
+            }
+          ]
+        }
+      },
+      "id": "http-fetch",
+      "name": "HTTP · descarga página mercado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parser genérico — delega por mercado\nconst cheerio = require('cheerio')\nconst mercado = $('Split · un mercado a la vez').item.json.nombre\nconst html = $input.first().json.data || $input.first().json.body\n\nconst fecha = new Date().toISOString().split('T')[0]\n\nfunction parseMercabarna(html) {\n  const $ = cheerio.load(html)\n  const rows = []\n  $('table.precios tr, table.tabla-precios tr').each((_, tr) => {\n    const cols = $(tr).find('td').map((_, td) => $(td).text().trim()).get()\n    if (cols.length < 4 || !cols[1]) return\n    rows.push({\n      nombre_scraper: cols[1],\n      precio_min: parseFloat((cols[2] || '').replace(',', '.')) || null,\n      precio_max: parseFloat((cols[3] || '').replace(',', '.')) || null,\n      precio_kg: cols[4] ? parseFloat(cols[4].replace(',', '.')) : null,\n      unidad: cols[5] || 'kg',\n      origen: cols[6] || null,\n      calibre: cols[7] || null,\n      fecha\n    })\n  })\n  return rows\n}\n\n// Placeholder para otros mercados — completar según formato real\nfunction parseMercamadrid(html) { return parseMercabarna(html) }\nfunction parseMercavalencia(html) { return parseMercabarna(html) }\nfunction parseMercabilbao(html) { return parseMercabarna(html) }\nfunction parseMercasevilla(html) { return parseMercabarna(html) }\n\nconst parsers = { mercabarna: parseMercabarna, mercamadrid: parseMercamadrid, mercavalencia: parseMercavalencia, mercabilbao: parseMercabilbao, mercasevilla: parseMercasevilla }\nif (!parsers[mercado]) throw new Error(`Sin parser para ${mercado}`)\n\nreturn parsers[mercado](html).map(row => ({ json: { ...row, mercado_slug: mercado } }))\n"
+      },
+      "id": "parser-router",
+      "name": "Code · parser por mercado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "={{ $env.AIRTABLE_BASE_ID }}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "ingredientes",
+          "mode": "name"
+        },
+        "filterByFormula": "=OR(LOWER({nombre}) = LOWER('{{ $json.nombre_scraper.replace(/'/g, \"\\\\'\") }}'), FIND(LOWER('{{ $json.nombre_scraper.replace(/'/g, \"\\\\'\") }}'), LOWER({sinonimos_scraper})) > 0)",
+        "options": {
+          "returnAll": false,
+          "limit": 1
+        }
+      },
+      "id": "search-ingrediente",
+      "name": "Airtable · Match ingrediente",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [1340, 300],
+      "credentials": {
+        "airtableTokenApi": {
+          "name": "KODA Airtable PAT"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "match-found",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-match",
+      "name": "IF · match encontrado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construir registro para tabla `precios`\nconst scraper = $('Code · parser por mercado').item.json\nconst ingrediente = $input.first().json\nconst mercado = $('Split · un mercado a la vez').item.json\n\nconst precio = scraper.precio_kg ?? ((scraper.precio_min + scraper.precio_max) / 2)\n\nreturn [{\n  json: {\n    ingrediente: [ingrediente.id],\n    mercado: [mercado.id],\n    fecha: scraper.fecha,\n    precio_kg: precio,\n    precio_min: scraper.precio_min,\n    precio_max: scraper.precio_max,\n    unidad: scraper.unidad,\n    calibre: scraper.calibre,\n    origen: scraper.origen,\n    procedencia_scraper: `n8n_${$workflow.id}_${new Date().toISOString().slice(0,10)}`\n  }\n}]\n"
+      },
+      "id": "build-precio",
+      "name": "Code · construir registro precio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 240]
+    },
+    {
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "operation": "upsert",
+        "base": {
+          "__rl": true,
+          "value": "={{ $env.AIRTABLE_BASE_ID }}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "precios",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": ["hash_registro"],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "upsert-precio",
+      "name": "Airtable · Upsert precio",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [2000, 240],
+      "credentials": {
+        "airtableTokenApi": {
+          "name": "KODA Airtable PAT"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "={{ $env.AIRTABLE_BASE_ID }}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "ingredientes_pendientes",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "nombre_scraper": "={{ $('Code · parser por mercado').item.json.nombre_scraper }}",
+            "mercado": "={{ $('Split · un mercado a la vez').item.json.nombre }}",
+            "fecha_deteccion": "={{ $now }}",
+            "precio_visto": "={{ $('Code · parser por mercado').item.json.precio_kg }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "queue-pendiente",
+      "name": "Airtable · Encolar pendiente",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [1780, 380],
+      "credentials": {
+        "airtableTokenApi": {
+          "name": "KODA Airtable PAT"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "operation": "update",
+        "base": {
+          "__rl": true,
+          "value": "={{ $env.AIRTABLE_BASE_ID }}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "mercados",
+          "mode": "name"
+        },
+        "id": "={{ $('Split · un mercado a la vez').item.json.id }}",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ultima_actualizacion": "={{ $now }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "update-mercado-ts",
+      "name": "Airtable · Marcar mercado actualizado",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [2220, 300],
+      "credentials": {
+        "airtableTokenApi": {
+          "name": "KODA Airtable PAT"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron · 06:00 diario": {
+      "main": [[{ "node": "Airtable · Get mercados activos", "type": "main", "index": 0 }]]
+    },
+    "Airtable · Get mercados activos": {
+      "main": [[{ "node": "Split · un mercado a la vez", "type": "main", "index": 0 }]]
+    },
+    "Split · un mercado a la vez": {
+      "main": [[{ "node": "HTTP · descarga página mercado", "type": "main", "index": 0 }]]
+    },
+    "HTTP · descarga página mercado": {
+      "main": [[{ "node": "Code · parser por mercado", "type": "main", "index": 0 }]]
+    },
+    "Code · parser por mercado": {
+      "main": [[{ "node": "Airtable · Match ingrediente", "type": "main", "index": 0 }]]
+    },
+    "Airtable · Match ingrediente": {
+      "main": [[{ "node": "IF · match encontrado?", "type": "main", "index": 0 }]]
+    },
+    "IF · match encontrado?": {
+      "main": [
+        [{ "node": "Code · construir registro precio", "type": "main", "index": 0 }],
+        [{ "node": "Airtable · Encolar pendiente", "type": "main", "index": 0 }]
+      ]
+    },
+    "Code · construir registro precio": {
+      "main": [[{ "node": "Airtable · Upsert precio", "type": "main", "index": 0 }]]
+    },
+    "Airtable · Upsert precio": {
+      "main": [[{ "node": "Airtable · Marcar mercado actualizado", "type": "main", "index": 0 }]]
+    },
+    "Airtable · Encolar pendiente": {
+      "main": [[{ "node": "Airtable · Marcar mercado actualizado", "type": "main", "index": 0 }]]
+    },
+    "Airtable · Marcar mercado actualizado": {
+      "main": [[{ "node": "Split · un mercado a la vez", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Madrid",
+    "errorWorkflow": ""
+  },
+  "tags": [
+    { "name": "koda" },
+    { "name": "scraper" },
+    { "name": "mercasa" }
+  ]
+}
