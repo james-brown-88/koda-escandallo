@@ -1,0 +1,192 @@
+{
+  "name": "KODA · Scraper Mercasa Central → Airtable",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "0 6 * * *" }
+          ]
+        }
+      },
+      "id": "cron",
+      "name": "Cron · 06:00 diario",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 400]
+    },
+    {
+      "parameters": {
+        "url": "https://www.mercasa.es/precios-y-mercados-mayoristas/",
+        "options": {
+          "timeout": 30000,
+          "response": { "response": { "responseFormat": "text" } }
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "User-Agent", "value": "Mozilla/5.0 (KODA-Scraper/1.0)" },
+            { "name": "Accept", "value": "text/html,application/xhtml+xml" },
+            { "name": "Accept-Language", "value": "es-ES,es;q=0.9" }
+          ]
+        }
+      },
+      "id": "http",
+      "name": "HTTP · Mercasa portal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parser Mercasa central portal — extrae precios de todos los mercas × productos\nconst cheerio = require('cheerio')\nconst html = $input.first().json.data\nconst $ = cheerio.load(html)\n\n// Fecha del scraping = hoy (Mercasa muestra la semana actual por defecto)\nconst hoy = new Date().toISOString().split('T')[0]\n\n// Slugs de mercas en el orden que aparecen en las columnas\nconst MERCAS = ['mercamadrid', 'mercabarna', 'mercabilbao', 'mercavalencia', 'mercasevilla']\n\n// Categorías esperadas (rows de cabecera)\nconst CATEGORIAS = ['Frutas', 'Hortalizas', 'Pescado Fresco', 'Pescado Congelado', 'Carnes']\n\nconst items = []\nlet currentCat = null\n\n// La tabla principal es la primera de la página (la segunda es de cookies)\nconst table = $('table').first()\n\ntable.find('tr').each((_, tr) => {\n  const cells = $(tr).find('td, th').map((_, c) => $(c).text().trim()).get()\n  if (cells.length === 0) return\n\n  // Filas de cabecera de categoría — 1 sola celda con el nombre\n  if (cells.length === 1 && CATEGORIAS.includes(cells[0])) {\n    currentCat = cells[0]\n    return\n  }\n\n  // Filas de sub-cabecera (fechas) — se ignoran\n  if (cells[0] === 'Productos' || /^\\d{1,2}\\/\\d{1,2}$/.test(cells[0])) return\n\n  // Filas de datos — 11 celdas: producto + 5 mercas × 2 fechas\n  if (cells.length !== 11) return\n\n  const producto = cells[0]\n  if (!producto || producto.length < 2) return\n\n  MERCAS.forEach((merca, mi) => {\n    // Cogemos el precio de la segunda fecha (la más reciente)\n    const rawPrice = cells[1 + mi * 2 + 1]\n    if (!rawPrice || rawPrice === '' || rawPrice === '-') return\n    const precio = parseFloat(rawPrice.replace(',', '.'))\n    if (!Number.isFinite(precio) || precio <= 0) return\n\n    items.push({\n      json: {\n        producto_scraper: producto,\n        categoria: currentCat,\n        mercado_slug: merca,\n        precio_kg: precio,\n        fecha: hoy\n      }\n    })\n  })\n})\n\nif (items.length === 0) {\n  throw new Error('Parser no extrajo ningun precio — revisar HTML de Mercasa (puede haber cambiado estructura)')\n}\n\nreturn items\n"
+      },
+      "id": "parser",
+      "name": "Code · parser Mercasa",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "split",
+      "name": "Split · una fila a la vez",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "appxYLpaRlA6Y8Z8z",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblhYVsmbMLOwsuy6",
+          "mode": "id"
+        },
+        "filterByFormula": "=OR(LOWER({nombre}) = LOWER('{{ $json.producto_scraper.replace(/'/g, \"\\\\'\") }}'), AND({sinonimos_scraper} != '', FIND(LOWER('{{ $json.producto_scraper.replace(/'/g, \"\\\\'\") }}'), LOWER({sinonimos_scraper})) > 0))",
+        "options": {
+          "returnAll": false,
+          "limit": 1
+        }
+      },
+      "id": "search-ing",
+      "name": "Airtable · Match ingrediente",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-id",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEmpty", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-match",
+      "name": "IF · encontrado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construye el registro de precio con IDs de mercado hardcodeados (poblados al crear la base)\nconst MERCADO_IDS = {\n  mercabarna: 'recLy7kRK4US0OMAp',\n  mercamadrid: 'recxOTy49LL6j7kgL',\n  mercavalencia: 'recKPDMam37kiVYwA',\n  mercabilbao: 'rec2q8E6OICBjFhzN',\n  mercasevilla: 'recLr4elsMTrhQu2R'\n}\n\nconst ing = $input.first().json                                     // ingrediente Airtable\nconst scraper = $('Code · parser Mercasa').item.json                // datos scraper\n\nconst mercadoId = MERCADO_IDS[scraper.mercado_slug]\nif (!mercadoId) throw new Error('Mercado desconocido: ' + scraper.mercado_slug)\n\nconst idRegistro = `${ing.id}-${mercadoId}-${scraper.fecha}`\n\nreturn [{\n  json: {\n    id_registro: idRegistro,\n    fecha: scraper.fecha,\n    precio_kg: scraper.precio_kg,\n    unidad: 'kg',\n    procedencia_scraper: 'n8n_mercasa_central',\n    ingrediente: [ing.id],\n    mercado: [mercadoId]\n  }\n}]\n"
+      },
+      "id": "build",
+      "name": "Code · construir precio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 320]
+    },
+    {
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "operation": "upsert",
+        "base": {
+          "__rl": true,
+          "value": "appxYLpaRlA6Y8Z8z",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblktp6kjY2aO0XhQ",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": ["id_registro"],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "upsert",
+      "name": "Airtable · Upsert precio",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [1780, 320]
+    }
+  ],
+  "connections": {
+    "Cron · 06:00 diario": {
+      "main": [[{ "node": "HTTP · Mercasa portal", "type": "main", "index": 0 }]]
+    },
+    "HTTP · Mercasa portal": {
+      "main": [[{ "node": "Code · parser Mercasa", "type": "main", "index": 0 }]]
+    },
+    "Code · parser Mercasa": {
+      "main": [[{ "node": "Split · una fila a la vez", "type": "main", "index": 0 }]]
+    },
+    "Split · una fila a la vez": {
+      "main": [
+        [],
+        [{ "node": "Airtable · Match ingrediente", "type": "main", "index": 0 }]
+      ]
+    },
+    "Airtable · Match ingrediente": {
+      "main": [[{ "node": "IF · encontrado?", "type": "main", "index": 0 }]]
+    },
+    "IF · encontrado?": {
+      "main": [
+        [{ "node": "Code · construir precio", "type": "main", "index": 0 }],
+        [{ "node": "Split · una fila a la vez", "type": "main", "index": 0 }]
+      ]
+    },
+    "Code · construir precio": {
+      "main": [[{ "node": "Airtable · Upsert precio", "type": "main", "index": 0 }]]
+    },
+    "Airtable · Upsert precio": {
+      "main": [[{ "node": "Split · una fila a la vez", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Madrid"
+  },
+  "tags": [
+    { "name": "koda" },
+    { "name": "scraper" },
+    { "name": "mercasa-central" }
+  ]
+}
