@@ -24,7 +24,7 @@
         "operation": "search",
         "base": {
           "__rl": true,
-          "value": "={{ $env.AIRTABLE_BASE_ID }}",
+          "value": "appxYLpaRlA6Y8Z8z",
           "mode": "id"
         },
         "table": {
@@ -104,7 +104,7 @@
         "operation": "search",
         "base": {
           "__rl": true,
-          "value": "={{ $env.AIRTABLE_BASE_ID }}",
+          "value": "appxYLpaRlA6Y8Z8z",
           "mode": "id"
         },
         "table": {
@@ -175,7 +175,7 @@
         "operation": "upsert",
         "base": {
           "__rl": true,
-          "value": "={{ $env.AIRTABLE_BASE_ID }}",
+          "value": "appxYLpaRlA6Y8Z8z",
           "mode": "id"
         },
         "table": {
@@ -207,7 +207,7 @@
         "operation": "create",
         "base": {
           "__rl": true,
-          "value": "={{ $env.AIRTABLE_BASE_ID }}",
+          "value": "appxYLpaRlA6Y8Z8z",
           "mode": "id"
         },
         "table": {
@@ -243,7 +243,7 @@
         "operation": "update",
         "base": {
           "__rl": true,
-          "value": "={{ $env.AIRTABLE_BASE_ID }}",
+          "value": "appxYLpaRlA6Y8Z8z",
           "mode": "id"
         },
         "table": {

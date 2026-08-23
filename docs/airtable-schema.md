@@ -1,8 +1,31 @@
 # KODA · Base de datos Mercasa en Airtable
 
-Esquema propuesto para la base que alimenta la **Biblioteca de Mercado** de la
-vista *Proyección*. La rellena un workflow de n8n (ver [n8n-scraper-workflow.md](./n8n-scraper-workflow.md))
+Esquema de la base que alimenta la **Biblioteca de Mercado** de la vista *Proyección*.
+La rellena un workflow de n8n (ver [n8n-scraper-workflow.md](./n8n-scraper-workflow.md))
 que corre a diario y hace scraping de precios mayoristas.
+
+---
+
+## Estado actual
+
+✅ **Base creada en Airtable · lista para producción**
+
+- **Workspace**: `My First Workspace`
+- **Base**: `KODA_Mercado` → `appxYLpaRlA6Y8Z8z`
+- **4 tablas** con esquema definitivo y vínculos entre sí
+- **5 mercados** precargados (mercabarna, mercamadrid, mercavalencia, mercabilbao, mercasevilla)
+- **17 familias** precargadas con % merma default y emoji
+- **38 ingredientes** precargados con familia, sinónimos para scraper y tags
+- **0 precios** — pendiente arrancar el scraper n8n para poblar la tabla `precios`
+
+### IDs de las 4 tablas (para el frontend/backend/n8n)
+
+| Tabla | Table ID |
+|---|---|
+| `mercados` | `tbl8vv4IlYEdEH5Fk` |
+| `familias` | `tblhSnFOI9Ve6TxWa` |
+| `ingredientes` | `tblhYVsmbMLOwsuy6` |
+| `precios` | `tblktp6kjY2aO0XhQ` |
 
 ---
 
